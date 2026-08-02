@@ -110,7 +110,8 @@ class RAGService:
         if not RAGService._ollama_offline and p_name == "ollama":
             # We try to use nomic-embed-text or the default model
             model = settings.OLLAMA_MODEL if hasattr(settings, "OLLAMA_MODEL") else "llama3"
-            async with httpx.AsyncClient(timeout=1.0) as client:
+            # 8 s timeout — generous enough for a cold-start model load without hanging forever
+            async with httpx.AsyncClient(timeout=8.0) as client:
                 try:
                     resp = await client.post(
                         "http://localhost:11434/api/embeddings",

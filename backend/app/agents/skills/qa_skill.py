@@ -1,3 +1,18 @@
+"""QASkill — grounded question answering from Lenny's podcast transcripts.
+
+Demo-optimisation notes (applied without removing functionality)
+---------------------------------------------------------------
+* ``top_k=3``     : Retrieve 3 chunks instead of 4 — smaller RAG context,
+                    slightly faster embedding similarity scan.
+* ``context[-2:]``: Pass only the single most recent exchange (user + assistant)
+                    as conversation history.  A demo's first question needs zero
+                    history; multi-turn benefit is marginal vs. the token cost.
+* ``num_predict=600``: Caps Ollama token generation at ~450 words.  Enough for
+                    3–6 well-developed bullet points with source attribution.
+* System prompt wording: Explicitly instructs the model to respond concisely
+                    with 3–6 key points so it doesn't meander.
+"""
+
 import time
 import logging
 from typing import List, Dict, Any
@@ -37,8 +52,8 @@ class QASkill(BaseSkill):
 
     async def execute(self, prompt: str, context: List[Dict[str, str]], **kwargs) -> Dict[str, Any]:
         rag = RAGService()
-        # Retrieve context chunks
-        chunks = await rag.query(prompt, top_k=4)
+        # Retrieve top-3 most relevant chunks (down from 4 — keeps prompt tighter)
+        chunks = await rag.query(prompt, top_k=3)
 
         logger.info(
             "[QA] Retrieved %d RAG chunks for query: %r",
@@ -77,22 +92,33 @@ class QASkill(BaseSkill):
         )
 
         system_prompt = (
-            "You are the Lenny Growth Assistant. You answer questions about product management, growth, strategy, "
-            "and startups STRICTLY based on the transcript excerpts provided below. Do not invent details or use external knowledge. "
-            "If the transcripts do not contain enough information to answer the user's question, state clearly that you do not "
-            "have enough evidence in the transcripts. Reference the episode titles/IDs in your answers to credit the sources.\n\n"
-            f"Here are the relevant transcript passages:\n{context_str}"
+            "You are the Lenny Growth Assistant. Answer questions about product management, "
+            "growth, and startups STRICTLY based on the transcript excerpts provided below. "
+            "Do not invent details or use external knowledge. "
+            "If the transcripts do not contain enough information, state clearly that you do not "
+            "have sufficient evidence in the transcripts.\n\n"
+            "RESPONSE FORMAT (follow exactly):\n"
+            "- Answer with 3 to 6 concise bullet points.\n"
+            "- Each bullet should be 1–2 sentences.\n"
+            "- Bold key terms or concepts.\n"
+            "- Reference the episode title or ID as the source for each point.\n"
+            "- Do NOT write lengthy paragraphs.\n\n"
+            f"Relevant transcript passages:\n{context_str}"
         )
 
-        # Build message chain — limit conversation history to last 4 turns
+        # Build message chain — limit to last 1 exchange (2 messages) to keep prompt small
         messages = []
-        for msg in context[-4:]:
+        for msg in context[-2:]:
             messages.append({"role": msg["role"], "content": msg["content"]})
         messages.append({"role": "user", "content": prompt})
 
         llm = get_llm_provider()
         start_time = time.monotonic()
-        response_text = await llm.generate(messages=messages, system_prompt=system_prompt)
+        response_text = await llm.generate(
+            messages=messages,
+            system_prompt=system_prompt,
+            options={"num_predict": 600},  # ~450 words — enough for 3–6 quality bullets
+        )
         elapsed = time.monotonic() - start_time
 
         logger.info("[QA] LLM generation completed in %.1fs", elapsed)

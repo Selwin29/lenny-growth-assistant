@@ -80,10 +80,15 @@ export default function ChatBox({
                 <button
                   key={idx}
                   onClick={() => {
-                    setInput(item.prompt);
+                    if (isLoading) return;
                     onSendMessage(item.prompt);
                   }}
-                  className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 hover:border-amber-500/40 hover:bg-slate-900 text-left transition group"
+                  disabled={isLoading}
+                  className={`p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 text-left transition group ${
+                    isLoading
+                      ? "opacity-40 cursor-not-allowed"
+                      : "hover:border-amber-500/40 hover:bg-slate-900 cursor-pointer"
+                  }`}
                 >
                   <div className="flex items-center space-x-2 text-xs font-semibold text-amber-400 mb-1">
                     <Compass className="w-3.5 h-3.5 group-hover:rotate-45 transition-transform" />

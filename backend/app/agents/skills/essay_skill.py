@@ -1,3 +1,14 @@
+"""EssaySkill — Ship30for30-style long-form essay generation.
+
+Demo-optimisation notes
+-----------------------
+* ``num_predict=1800``: Caps generation at ~1300 words — sufficient for a
+  comprehensive Ship30for30 essay without letting the model meander.
+* No conversation history: Essays are always standalone creative outputs.
+  Passing prior chat turns wastes tokens and doesn't improve quality.
+* ``top_k=5`` retained: More transcript context produces richer essays.
+"""
+
 import time
 import logging
 from typing import List, Dict, Any
@@ -22,6 +33,7 @@ def _truncate_chunk(text: str, max_chars: int = _CHUNK_CHAR_LIMIT) -> str:
         truncated = truncated[:last_space]
     return truncated + " […]"
 
+
 class EssaySkill(BaseSkill):
     @property
     def name(self) -> str:
@@ -33,6 +45,7 @@ class EssaySkill(BaseSkill):
 
     async def execute(self, prompt: str, context: List[Dict[str, str]], **kwargs) -> Dict[str, Any]:
         rag = RAGService()
+        # Keep top_k=5 for richer essay context
         chunks = await rag.query(prompt, top_k=5)
 
         logger.info(
@@ -61,24 +74,34 @@ class EssaySkill(BaseSkill):
         )
 
         system_prompt = (
-            "You are a world-class creator specializing in writing Ship30for30-style essays. Your goal is to synthesize the transcript excerpts "
-            "provided below into a deep, engaging, and highly skimmable essay of approximately 1250 words.\n\n"
+            "You are a world-class creator specializing in writing Ship30for30-style essays. "
+            "Your goal is to synthesize the transcript excerpts provided below into a deep, "
+            "engaging, and highly skimmable essay of approximately 1250 words.\n\n"
             "Strict Writing Guidelines:\n"
             "1. Hook: Start with a strong, single-sentence opening hook that commands attention.\n"
             "2. Structure: Break the article down into clear sections with descriptive headers.\n"
-            "3. Skimmability: Use short paragraphs (1-3 sentences maximum). Bold important terms, concepts, and ideas. Use bullet points for lists and comparisons.\n"
-            "4. Grounded in Evidence: Use only facts, quotes, and insights mentioned in the provided transcripts. Do not fabricate quotes or pretend Lenny said something not in the source text.\n"
-            "5. Takeaways: End with a clear, bold, actionable takeaway for product managers or growth operators.\n\n"
+            "3. Skimmability: Use short paragraphs (1-3 sentences maximum). "
+            "Bold important terms, concepts, and ideas. Use bullet points for lists and comparisons.\n"
+            "4. Grounded in Evidence: Use only facts, quotes, and insights mentioned in the "
+            "provided transcripts. Do not fabricate quotes or pretend Lenny said something "
+            "not in the source text.\n"
+            "5. Takeaways: End with a clear, bold, actionable takeaway for product managers "
+            "or growth operators.\n\n"
             f"Here are the transcript passages to synthesize:\n{context_str}"
         )
 
+        # Essays are standalone — no conversation history needed
         messages = [
             {"role": "user", "content": f"Write a comprehensive Ship30for30-style essay on the topic: {prompt}"}
         ]
 
         llm = get_llm_provider()
         start_time = time.monotonic()
-        response_text = await llm.generate(messages=messages, system_prompt=system_prompt)
+        response_text = await llm.generate(
+            messages=messages,
+            system_prompt=system_prompt,
+            options={"num_predict": 1800},  # ~1300 words — right size for a Ship30for30 essay
+        )
         elapsed = time.monotonic() - start_time
         logger.info("[Essay] LLM generation completed in %.1fs", elapsed)
 

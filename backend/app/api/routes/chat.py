@@ -149,9 +149,11 @@ async def create_message(
     # 1. Create and persist user message
     user_message = message_service.create_message(db, session_id, payload)
     
-    # 2. Retrieve session history context
+    # 2. Retrieve session history context — trimmed to last 6 messages (3 exchanges)
+    #    to reduce Ollama prompt size. Full history is always persisted in the DB.
     history_messages = message_service.list_messages(db, session_id)
     context = [{"role": msg.role.value, "content": msg.content} for msg in history_messages]
+    context = context[-6:]  # keep only the most recent 3 exchanges
     
     # 3. Route and execute Agent logic
     try:
