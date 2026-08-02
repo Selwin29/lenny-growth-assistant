@@ -25,6 +25,16 @@ class MessageCreate(BaseModel):
         default=MessageRole.USER,
         description="Author of the message. Clients should always send 'user'.",
     )
+    mode: Optional[str] = Field(
+        default=None,
+        description="Explicit UI mode: 'chat' / 'qa', 'artifacts' / 'artifact', or 'ship30for30' / 'essay'.",
+    )
+    provider: Optional[str] = Field(
+        default=None,
+        description="Explicit LLM provider: 'gemini', 'anthropic', or 'ollama'.",
+    )
+
+
 
 
 class MessageRead(ORMBase):

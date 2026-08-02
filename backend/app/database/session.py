@@ -19,13 +19,14 @@ logger = logging.getLogger(__name__)
 # SQLite requires this extra connect arg when used with multiple threads
 # (as FastAPI's threaded request handling does). It's a no-op for other
 # database backends (Postgres, MySQL, etc.).
-_connect_args = {"check_same_thread": False} if settings.DATABASE_URL.startswith("sqlite") else {}
+_connect_args = {"check_same_thread": False} if settings.sync_database_url.startswith("sqlite") else {}
 
 engine = create_engine(
-    settings.DATABASE_URL,
+    settings.sync_database_url,
     connect_args=_connect_args,
     pool_pre_ping=True,
 )
+
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

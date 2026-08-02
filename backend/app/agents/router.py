@@ -94,17 +94,36 @@ class AgentRouter:
         }
 
     async def route_and_execute(
-        self, prompt: str, context: List[Dict[str, str]]
+        self,
+        prompt: str,
+        context: List[Dict[str, str]],
+        mode: Optional[str] = None,
+        provider: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Classify the user's intent and execute the appropriate skill.
 
         Classification order:
-        1. Keyword fast-path (no LLM call needed).
-        2. LLM classifier (fallback for ambiguous prompts).
-        3. Default to ``qa`` if the LLM call fails.
+        1. Explicit UI mode (if provided and valid).
+        2. Keyword fast-path (no LLM call needed).
+        3. LLM classifier (fallback for ambiguous prompts).
+        4. Default to ``qa`` if classification fails.
         """
-        # --- Step 1: Keyword fast-path ---
-        target_skill_name = _keyword_classify(prompt)
+        target_skill_name = None
+
+        if mode:
+            mode_clean = mode.strip().lower()
+            if mode_clean in ("chat", "qa"):
+                target_skill_name = "qa"
+            elif mode_clean in ("artifacts", "artifact"):
+                target_skill_name = "artifact"
+            elif mode_clean in ("ship30for30", "essay"):
+                target_skill_name = "essay"
+            if target_skill_name:
+                logger.info("[Router] Explicit mode %r → skill %r", mode, target_skill_name)
+
+        # --- Step 1: Keyword fast-path (if mode was not explicitly provided) ---
+        if target_skill_name is None:
+            target_skill_name = _keyword_classify(prompt)
 
         if target_skill_name is None:
             # --- Step 2: LLM classifier fallback (only for ambiguous prompts) ---
@@ -122,7 +141,7 @@ class AgentRouter:
             ).format(prompt=prompt)
 
             try:
-                llm = get_llm_provider()
+                llm = get_llm_provider(provider_name=provider)
                 classification_result = await llm.generate(
                     messages=[{"role": "user", "content": classification_prompt}],
                     options={"num_predict": 10},  # classification needs ≤ 3 tokens
@@ -145,8 +164,9 @@ class AgentRouter:
                 )
                 target_skill_name = "qa"
 
-        logger.info("[Router] Dispatching to skill=%r for prompt=%r", target_skill_name, prompt[:60])
+        logger.info("[Router] Dispatching to skill=%r for prompt=%r (provider=%s)", target_skill_name, prompt[:60], provider)
         skill = self.skills[target_skill_name]
-        result = await skill.execute(prompt, context)
+        result = await skill.execute(prompt, context, provider=provider)
         result["skill_used"] = target_skill_name
         return result
+

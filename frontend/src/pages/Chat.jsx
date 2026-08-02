@@ -13,6 +13,8 @@ export default function Chat() {
   const [activeSessionId, setActiveSessionId] = useState(null);
   const [activeSession, setActiveSession] = useState(null);
   const [messages, setMessages] = useState([]);
+  const [activeMode, setActiveMode] = useState("chat"); // "chat" | "artifacts" | "ship30for30"
+  const [activeProvider, setActiveProvider] = useState("gemini"); // "gemini" | "anthropic" | "ollama"
   
   const [loadingSessions, setLoadingSessions] = useState(true);
   const [loadingMessages, setLoadingMessages] = useState(false);
@@ -59,7 +61,14 @@ export default function Chat() {
       setError(null);
       const detail = await chatService.getSession(sessionId);
       setActiveSession(detail);
-      setMessages(detail.messages || []);
+      const fetchedMsgs = detail.messages || [];
+      setMessages(fetchedMsgs);
+      
+      // Auto-open artifact if generated in the latest message
+      const lastMsg = fetchedMsgs[fetchedMsgs.length - 1];
+      if (lastMsg && lastMsg.artifact) {
+        setActiveArtifact(lastMsg.artifact);
+      }
     } catch (err) {
       console.error(`Failed to load session ${sessionId}:`, err);
       setError("Failed to load session history.");
@@ -140,10 +149,12 @@ export default function Chat() {
     setError(null);
 
     try {
-      // 1. Post user message to backend
+      // 1. Post user message with explicit mode & provider to backend
       const savedUserMsg = await chatService.sendMessage(activeSessionId, {
         role: "user",
         content,
+        mode: activeMode,
+        provider: activeProvider,
       });
 
       // Replace temp message with persisted message
@@ -185,8 +196,14 @@ export default function Chat() {
       <Navbar
         onToggleSidebar={() => setSidebarOpen((prev) => !prev)}
         onNewChat={handleNewChat}
+        activeMode={activeMode}
+        onSelectMode={setActiveMode}
+        activeProvider={activeProvider}
+        onSelectProvider={setActiveProvider}
         userEmail={user?.email || "dev@example.com"}
       />
+
+
 
       {/* Main Content Area */}
       <div className="flex-1 flex overflow-hidden relative">

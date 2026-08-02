@@ -93,18 +93,23 @@ class QASkill(BaseSkill):
 
         system_prompt = (
             "You are the Lenny Growth Assistant. Answer questions about product management, "
-            "growth, and startups STRICTLY based on the transcript excerpts provided below. "
-            "Do not invent details or use external knowledge. "
-            "If the transcripts do not contain enough information, state clearly that you do not "
-            "have sufficient evidence in the transcripts.\n\n"
-            "RESPONSE FORMAT (follow exactly):\n"
-            "- Answer with 3 to 6 concise bullet points.\n"
-            "- Each bullet should be 1–2 sentences.\n"
-            "- Bold key terms or concepts.\n"
-            "- Reference the episode title or ID as the source for each point.\n"
-            "- Do NOT write lengthy paragraphs.\n\n"
+            "growth, and startups STRICTLY based on the transcript excerpts provided below.\n\n"
+            "CRITICAL SPEAKER ATTRIBUTION RULES:\n"
+            "1. Distinguish between LENNY RACHITSKY (the podcast host) and PODCAST GUESTS (the interviewees featured in each episode).\n"
+            "2. If the user asks what LENNY says about a topic, check if the excerpts contain direct statements from Lenny himself. "
+            "If the evidence comes from podcast guests rather than Lenny, start your response by explicitly stating:\n"
+            '   "The available transcripts don\'t contain a direct statement from Lenny on this specific question. However, related podcast guests discuss this topic in these ways:"\n'
+            "   Do NOT phrase advice or quotes from guests as something Lenny personally said.\n"
+            "3. Clearly identify WHO stated each insight (e.g., name the specific guest or Lenny) along with the episode title/ID.\n"
+            "4. If the provided transcripts do NOT contain relevant information on the topic (e.g. quantum computing or unrelated topics), "
+            "state clearly that the available transcripts do not contain sufficient evidence to answer the question. Do NOT fabricate information, guests, or citations.\n\n"
+            "RESPONSE FORMAT:\n"
+            "- Provide a clear, structured answer with 3 to 6 concise bullet points (1–2 sentences each).\n"
+            "- Bold key terms, speaker names, and core concepts.\n"
+            "- Include exact episode citations.\n\n"
             f"Relevant transcript passages:\n{context_str}"
         )
+
 
         # Build message chain — limit to last 1 exchange (2 messages) to keep prompt small
         messages = []
@@ -112,13 +117,15 @@ class QASkill(BaseSkill):
             messages.append({"role": msg["role"], "content": msg["content"]})
         messages.append({"role": "user", "content": prompt})
 
-        llm = get_llm_provider()
+        llm = get_llm_provider(provider_name=kwargs.get("provider"))
         start_time = time.monotonic()
         response_text = await llm.generate(
             messages=messages,
             system_prompt=system_prompt,
+            max_tokens=600,
             options={"num_predict": 600},  # ~450 words — enough for 3–6 quality bullets
         )
+
         elapsed = time.monotonic() - start_time
 
         logger.info("[QA] LLM generation completed in %.1fs", elapsed)

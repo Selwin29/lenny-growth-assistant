@@ -61,6 +61,16 @@ class LLMTimeoutError(LLMError):
     pass
 
 
+class RateLimitError(LLMError):
+    """Raised when the LLM provider rate limit is exceeded."""
+    pass
+
+
+class TokenLimitExceededError(LLMError):
+    """Raised when prompt or output token limit is exceeded."""
+    pass
+
+
 # ---------------------------------------------------------------------------
 # Base provider
 # ---------------------------------------------------------------------------
@@ -82,16 +92,7 @@ class LLMProvider:
 # ---------------------------------------------------------------------------
 
 class OllamaProvider(LLMProvider):
-    """Local Ollama inference provider.
-
-    Timeout handling
-    ~~~~~~~~~~~~~~~~
-    Uses two separate timeouts:
-      - connect_timeout : ``settings.OLLAMA_CONNECT_TIMEOUT`` (default 10 s)
-      - read_timeout    : ``settings.OLLAMA_TIMEOUT`` (default 300 s)
-
-    Both can be overridden via environment variables without code changes.
-    """
+    """Local Ollama inference provider."""
 
     def __init__(
         self,
@@ -108,16 +109,12 @@ class OllamaProvider(LLMProvider):
         )
 
         logger.info(
-            "[LLM] OllamaProvider initialised | model=%s | base_url=%s | "
-            "connect_timeout=%ds | generation_timeout=%ds",
+            "[LLM] OllamaProvider initialised | model=%s | base_url=%s",
             self.model,
             self.base_url,
-            self.connect_timeout,
-            self.timeout,
         )
 
     def _build_http_timeout(self) -> httpx.Timeout:
-        """Return an httpx.Timeout with separate connect and read limits."""
         return httpx.Timeout(
             connect=float(self.connect_timeout),
             read=float(self.timeout),
@@ -131,24 +128,22 @@ class OllamaProvider(LLMProvider):
         system_prompt: Optional[str] = None,
         **kwargs,
     ) -> str:
-        # Build the final message list, prepending system prompt if provided
         formatted_messages: List[Dict[str, str]] = []
         if system_prompt:
             formatted_messages.append({"role": "system", "content": system_prompt})
         formatted_messages.extend(messages)
 
-        # Compute approximate prompt size for logging
         prompt_chars = sum(len(m.get("content", "")) for m in formatted_messages)
-        prompt_words = prompt_chars // 5  # rough estimate
+
+        options = dict(kwargs.get("options", {}))
+        if "max_tokens" in kwargs and "num_predict" not in options:
+            options["num_predict"] = kwargs["max_tokens"]
 
         logger.info(
-            "[LLM] Ollama generate | model=%s | messages=%d | "
-            "prompt_chars≈%d (~%d words) | timeout=%ds",
+            "[LLM] Ollama generate | model=%s | messages=%d | prompt_chars≈%d",
             self.model,
             len(formatted_messages),
             prompt_chars,
-            prompt_words,
-            self.timeout,
         )
 
         timeout = self._build_http_timeout()
@@ -162,63 +157,29 @@ class OllamaProvider(LLMProvider):
                         "model": self.model,
                         "messages": formatted_messages,
                         "stream": False,
-                        "options": kwargs.get("options", {}),
+                        "options": options,
                     },
                 )
             except httpx.ConnectError as e:
-                logger.error(
-                    "[LLM] Ollama connect error (base_url=%s): %s", self.base_url, e
-                )
                 raise ProviderUnavailableError(
-                    f"Cannot connect to Ollama at {self.base_url}. "
-                    "Make sure Ollama is running (`ollama serve`)."
+                    f"Cannot connect to Ollama at {self.base_url}. Make sure Ollama is running (`ollama serve`)."
                 ) from e
             except httpx.ConnectTimeout as e:
-                logger.error(
-                    "[LLM] Ollama connect timed out after %ds: %s",
-                    self.connect_timeout,
-                    e,
-                )
                 raise ProviderUnavailableError(
-                    f"Timed out connecting to Ollama at {self.base_url} "
-                    f"(connect_timeout={self.connect_timeout}s). "
-                    "Is Ollama running?"
+                    f"Timed out connecting to Ollama at {self.base_url}."
                 ) from e
             except httpx.ReadTimeout as e:
-                elapsed = time.monotonic() - start_time
-                logger.error(
-                    "[LLM] Ollama generation timed out after %.1fs "
-                    "(generation_timeout=%ds, prompt_chars≈%d)",
-                    elapsed,
-                    self.timeout,
-                    prompt_chars,
-                )
-                raise LLMTimeoutError(
-                    f"Ollama generation timed out after {elapsed:.0f}s "
-                    f"(limit={self.timeout}s). "
-                    "Consider increasing OLLAMA_TIMEOUT or reducing context size."
-                ) from e
+                raise LLMTimeoutError("Ollama generation timed out.") from e
             except httpx.TimeoutException as e:
-                elapsed = time.monotonic() - start_time
-                logger.error(
-                    "[LLM] Ollama request timed out after %.1fs: %s", elapsed, e
-                )
-                raise LLMTimeoutError(
-                    f"Ollama request timed out after {elapsed:.0f}s. "
-                    f"Increase OLLAMA_TIMEOUT (currently {self.timeout}s) if needed."
-                ) from e
+                raise LLMTimeoutError("Ollama request timed out.") from e
             except Exception as e:
-                logger.error("[LLM] Unexpected error communicating with Ollama: %s", e)
                 raise LLMError(f"Error communicating with Ollama: {str(e)}") from e
 
         elapsed = time.monotonic() - start_time
         logger.info("[LLM] Ollama responded in %.1fs (status=%d)", elapsed, response.status_code)
 
         if response.status_code == 404:
-            raise ModelNotFoundError(
-                f"Model '{self.model}' not found on local Ollama server. "
-                f"Pull it first: `ollama pull {self.model}`."
-            )
+            raise ModelNotFoundError(f"Model '{self.model}' not found on local Ollama server.")
         elif response.status_code != 200:
             raise LLMError(f"Ollama error {response.status_code}: {response.text}")
 
@@ -234,9 +195,9 @@ class OllamaProvider(LLMProvider):
 # ---------------------------------------------------------------------------
 
 class AnthropicProvider(LLMProvider):
-    def __init__(self, api_key: str = None, model: str = "claude-3-5-sonnet-20241022"):
+    def __init__(self, api_key: str = None, model: str = None):
         self.api_key = api_key or settings.ANTHROPIC_API_KEY
-        self.model = model
+        self.model = model or getattr(settings, "ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
         if not self.api_key or self.api_key == "your-anthropic-api-key-here":
             raise InvalidAPIKeyError("Anthropic API key is not configured.")
         self.client = AsyncAnthropic(api_key=self.api_key)
@@ -248,8 +209,8 @@ class AnthropicProvider(LLMProvider):
         system_prompt: Optional[str] = None,
         **kwargs,
     ) -> str:
+        prompt_chars = 0
         try:
-            # Anthropic does not allow "system" inside the messages list
             anthropic_messages = []
             for msg in messages:
                 role = msg["role"]
@@ -269,12 +230,14 @@ class AnthropicProvider(LLMProvider):
                 prompt_chars,
             )
 
+            max_tokens = kwargs.get("max_tokens") or kwargs.get("options", {}).get("num_predict", 1000)
+
             start_time = time.monotonic()
             response = await self.client.messages.create(
                 model=self.model,
                 messages=anthropic_messages,
                 system=system_prompt or "",
-                max_tokens=kwargs.get("max_tokens", 4000),
+                max_tokens=max_tokens,
                 timeout=60.0,
             )
             elapsed = time.monotonic() - start_time
@@ -283,14 +246,16 @@ class AnthropicProvider(LLMProvider):
 
         except Exception as e:
             err_msg = str(e).lower()
-            if "api_key" in err_msg or "unauthorized" in err_msg or "authentication" in err_msg:
-                raise InvalidAPIKeyError(f"Anthropic API key is invalid: {str(e)}") from e
+            if "api_key" in err_msg or "unauthorized" in err_msg or "authentication" in err_msg or "401" in err_msg or "403" in err_msg:
+                raise InvalidAPIKeyError("Anthropic API key is invalid or not configured.") from e
+            elif "rate" in err_msg or "429" in err_msg:
+                raise RateLimitError("Anthropic rate limit exceeded. Please try again later.") from e
+            elif "token" in err_msg or "context_length" in err_msg or "maximum context" in err_msg or "too long" in err_msg:
+                raise TokenLimitExceededError(f"Anthropic token limit exceeded (prompt size ~{prompt_chars} chars).") from e
             elif "not found" in err_msg or "model" in err_msg:
-                raise ModelNotFoundError(
-                    f"Anthropic model {self.model} not found or unavailable: {str(e)}"
-                ) from e
+                raise ModelNotFoundError(f"Anthropic model '{self.model}' not found or unavailable.") from e
             elif "timeout" in err_msg or "time out" in err_msg:
-                raise LLMTimeoutError(f"Anthropic request timed out: {str(e)}") from e
+                raise LLMTimeoutError("Anthropic request timed out.") from e
             else:
                 raise LLMError(f"Anthropic service error: {str(e)}") from e
 
@@ -341,32 +306,140 @@ class OpenAIProvider(LLMProvider):
         except Exception as e:
             err_msg = str(e).lower()
             if "api_key" in err_msg or "unauthorized" in err_msg or "authentication" in err_msg:
-                raise InvalidAPIKeyError(f"OpenAI API key is invalid: {str(e)}") from e
+                raise InvalidAPIKeyError("OpenAI API key is invalid or not configured.") from e
             elif "not_found" in err_msg or "model" in err_msg:
-                raise ModelNotFoundError(
-                    f"OpenAI model {self.model} not found or unavailable: {str(e)}"
-                ) from e
+                raise ModelNotFoundError(f"OpenAI model '{self.model}' not found or unavailable.") from e
             elif "timeout" in err_msg or "time out" in err_msg:
-                raise LLMTimeoutError(f"OpenAI request timed out: {str(e)}") from e
+                raise LLMTimeoutError("OpenAI request timed out.") from e
             else:
                 raise LLMError(f"OpenAI service error: {str(e)}") from e
+
+
+# ---------------------------------------------------------------------------
+# Gemini provider
+# ---------------------------------------------------------------------------
+
+class GeminiProvider(LLMProvider):
+    def __init__(self, api_key: str = None, model: str = None):
+        self.api_key = api_key or settings.GEMINI_API_KEY
+        self.model = model or getattr(settings, "GEMINI_MODEL", "gemini-1.5-flash")
+        if not self.api_key or self.api_key == "your-gemini-api-key-here":
+            raise InvalidAPIKeyError("Gemini API key is not configured.")
+        logger.info("[LLM] GeminiProvider initialised | model=%s", self.model)
+
+    async def generate(
+        self,
+        messages: List[Dict[str, str]],
+        system_prompt: Optional[str] = None,
+        **kwargs,
+    ) -> str:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": self.api_key,
+        }
+
+        contents = []
+        for msg in messages:
+            role = msg.get("role", "user")
+            if role == "system":
+                if not system_prompt:
+                    system_prompt = msg.get("content", "")
+                continue
+            gemini_role = "model" if role == "assistant" else "user"
+            contents.append({
+                "role": gemini_role,
+                "parts": [{"text": msg.get("content", "")}],
+            })
+
+        payload: Dict[str, Any] = {"contents": contents}
+        if system_prompt:
+            payload["system_instruction"] = {
+                "parts": [{"text": system_prompt}]
+            }
+
+        generation_config = {}
+        max_tokens = kwargs.get("max_tokens") or kwargs.get("options", {}).get("num_predict")
+        if max_tokens:
+            generation_config["maxOutputTokens"] = max_tokens
+
+        if generation_config:
+            payload["generationConfig"] = generation_config
+
+        prompt_chars = sum(len(m.get("content", "")) for m in messages)
+        if system_prompt:
+            prompt_chars += len(system_prompt)
+        logger.info(
+            "[LLM] Gemini generate | model=%s | messages=%d | prompt_chars≈%d",
+            self.model,
+            len(contents),
+            prompt_chars,
+        )
+
+        start_time = time.monotonic()
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            try:
+                response = await client.post(url, headers=headers, json=payload)
+            except httpx.ConnectError as e:
+                raise ProviderUnavailableError("Cannot connect to Gemini API.") from e
+            except httpx.TimeoutException as e:
+                raise LLMTimeoutError("Gemini request timed out.") from e
+            except Exception as e:
+                raise LLMError(f"Error communicating with Gemini: {str(e)}") from e
+
+        elapsed = time.monotonic() - start_time
+        logger.info("[LLM] Gemini responded in %.1fs (status=%d)", elapsed, response.status_code)
+
+        if response.status_code in (401, 403):
+            raise InvalidAPIKeyError("Gemini API key is invalid or unauthorized. Please check your GEMINI_API_KEY.")
+        elif response.status_code == 429:
+            raise RateLimitError("Gemini rate limit exceeded. Please try again later.")
+        elif response.status_code == 404:
+            raise ModelNotFoundError(f"Gemini model '{self.model}' not found.")
+        elif response.status_code != 200:
+            err_text = response.text.lower()
+            if "api_key" in err_text or "unauthorized" in err_text or "invalid" in err_text:
+                raise InvalidAPIKeyError("Gemini request failed due to invalid API key configuration.")
+            elif "token" in err_text or "resource_exhausted" in err_text or "quota" in err_text:
+                raise TokenLimitExceededError(f"Gemini token limit or quota exceeded (prompt size ~{prompt_chars} chars).")
+            raise LLMError(f"Gemini API error (status {response.status_code}).")
+
+        try:
+            res_json = response.json()
+            candidates = res_json.get("candidates", [])
+            if not candidates:
+                raise LLMError("Gemini returned no response candidates.")
+            parts = candidates[0].get("content", {}).get("parts", [])
+            return "".join(part.get("text", "") for part in parts)
+        except LLMError:
+            raise
+        except Exception as e:
+            raise LLMError(f"Failed to parse Gemini response: {str(e)}") from e
 
 
 # ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
 
+ALLOWED_PROVIDERS = {"ollama", "gemini", "anthropic", "openai"}
+
 def get_llm_provider(provider_name: str = None, model_name: str = None) -> LLMProvider:
     """Factory — return the configured LLM provider instance."""
     p_name = (provider_name or settings.LLM_PROVIDER).lower()
     logger.info("[LLM] Resolving provider: %s", p_name)
 
+    if p_name not in ALLOWED_PROVIDERS:
+        raise ValueError(f"Unknown LLM provider: '{p_name}'. Expected: ollama | gemini | anthropic")
+
     if p_name == "ollama":
-        provider = OllamaProvider(model=model_name or settings.OLLAMA_MODEL)
-        return provider
+        return OllamaProvider(model=model_name or settings.OLLAMA_MODEL)
+    elif p_name == "gemini":
+        return GeminiProvider(model=model_name or getattr(settings, "GEMINI_MODEL", "gemini-1.5-flash"))
     elif p_name == "anthropic":
-        return AnthropicProvider(model=model_name or "claude-3-5-sonnet-20241022")
+        return AnthropicProvider(model=model_name or getattr(settings, "ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022"))
     elif p_name == "openai":
         return OpenAIProvider(model=model_name or "gpt-4o")
     else:
-        raise ValueError(f"Unknown LLM provider: '{p_name}'. Expected: ollama | anthropic | openai")
+        raise ValueError(f"Unknown LLM provider: '{p_name}'. Expected: ollama | gemini | anthropic")
+
+

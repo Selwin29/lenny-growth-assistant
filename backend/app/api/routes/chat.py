@@ -146,28 +146,40 @@ async def create_message(
             detail="Forbidden: You do not own this chat session",
         )
         
-    # 1. Create and persist user message
+    # 1. Validate provider against allowlist if provided
+    ALLOWED_PROVIDERS = {"ollama", "gemini", "anthropic"}
+    if payload.provider:
+        clean_provider = payload.provider.strip().lower()
+        if clean_provider not in ALLOWED_PROVIDERS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid provider: '{payload.provider}'. Allowed providers: {', '.join(sorted(ALLOWED_PROVIDERS))}",
+            )
+
+    # 2. Create and persist user message
     user_message = message_service.create_message(db, session_id, payload)
     
-    # 2. Retrieve session history context — trimmed to last 6 messages (3 exchanges)
-    #    to reduce Ollama prompt size. Full history is always persisted in the DB.
+    # 3. Retrieve session history context — trimmed to last 2 messages (1 exchange)
+    #    for token efficiency. Full history is always persisted in the DB.
     history_messages = message_service.list_messages(db, session_id)
     context = [{"role": msg.role.value, "content": msg.content} for msg in history_messages]
-    context = context[-6:]  # keep only the most recent 3 exchanges
+    context = context[-2:]  # keep only the most recent 1 exchange
     
-    # 3. Route and execute Agent logic
+    # 4. Route and execute Agent logic
     try:
         router_instance = AgentRouter()
-        agent_res = await router_instance.route_and_execute(payload.content, context)
+        agent_res = await router_instance.route_and_execute(
+            payload.content, context, mode=payload.mode, provider=payload.provider
+        )
         
-        # 4. Save Assistant message
+        # 5. Save Assistant message
         assistant_payload = MessageCreate(
             content=agent_res["content"],
             role="assistant"
         )
         assistant_message = message_service.create_message(db, session_id, assistant_payload)
         
-        # 5. Save Artifact if generated
+        # 6. Save Artifact if generated
         if "artifact" in agent_res and agent_res["artifact"]:
             art_data = agent_res["artifact"]
             art_payload = ArtifactCreate(
@@ -179,11 +191,25 @@ async def create_message(
             
     except Exception as e:
         logger.error(f"Failed to generate assistant response: {e}", exc_info=True)
-        # Create a fallback assistant error message so user is not stuck
+        # Clean user-facing error message without exposing secrets or stack traces
+        err_msg = str(e)
+        if "API key" in err_msg or "unauthorized" in err_msg.lower() or "configured" in err_msg.lower():
+            p_label = payload.provider.capitalize() if payload.provider else "LLM"
+            user_err_text = f"{p_label} API key is not configured or invalid. Please check your backend/.env settings."
+        elif "rate limit" in err_msg.lower():
+            user_err_text = "Provider rate limit exceeded. Please wait a moment and try again."
+        elif "token limit" in err_msg.lower() or "context" in err_msg.lower():
+            user_err_text = "Prompt context size or token limit exceeded."
+        elif "timed out" in err_msg.lower() or "timeout" in err_msg.lower():
+            user_err_text = "LLM request timed out. Please try again."
+        else:
+            user_err_text = f"An error occurred while generating the response: {err_msg}"
+
         err_payload = MessageCreate(
-            content=f"An error occurred while generating the response: {str(e)}",
+            content=user_err_text,
             role="assistant"
         )
         message_service.create_message(db, session_id, err_payload)
         
     return MessageRead.model_validate(user_message)
+

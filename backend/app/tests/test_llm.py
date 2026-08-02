@@ -185,3 +185,74 @@ def test_get_llm_provider_openai_without_key_raises(monkeypatch):
     )
     with pytest.raises(InvalidAPIKeyError):
         get_llm_provider()
+
+
+# ---------------------------------------------------------------------------
+# GeminiProvider tests
+# ---------------------------------------------------------------------------
+
+from app.services.llm_service import GeminiProvider
+
+
+def test_gemini_provider_missing_key():
+    with pytest.raises(InvalidAPIKeyError, match="Gemini API key is not configured"):
+        GeminiProvider(api_key="")
+
+
+@pytest.mark.anyio
+async def test_gemini_provider_success():
+    provider = GeminiProvider(api_key="valid-test-key", model="gemini-1.5-flash")
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [{"text": "Hello from Gemini!"}]
+                }
+            }
+        ]
+    }
+    with patch("httpx.AsyncClient.post", return_value=mock_response) as mock_post:
+        res = await provider.generate([{"role": "user", "content": "Hi"}], system_prompt="Be helpful")
+        assert res == "Hello from Gemini!"
+        mock_post.assert_called_once()
+        url = mock_post.call_args[0][0]
+        assert "generativelanguage.googleapis.com" in url
+        assert "gemini-1.5-flash" in url
+
+
+def test_get_llm_provider_gemini(monkeypatch):
+    monkeypatch.setattr("app.services.llm_service.settings.LLM_PROVIDER", "gemini")
+    monkeypatch.setattr("app.services.llm_service.settings.GEMINI_API_KEY", "test-key-123")
+    provider = get_llm_provider()
+    assert isinstance(provider, GeminiProvider)
+    assert provider.model == "gemini-1.5-flash"
+
+
+def test_get_llm_provider_anthropic(monkeypatch):
+    monkeypatch.setattr("app.services.llm_service.settings.LLM_PROVIDER", "anthropic")
+    monkeypatch.setattr("app.services.llm_service.settings.ANTHROPIC_API_KEY", "test-key-456")
+    provider = get_llm_provider()
+    assert isinstance(provider, AnthropicProvider)
+    assert provider.model == "claude-3-5-sonnet-20241022"
+
+
+def test_anthropic_provider_missing_key():
+    with pytest.raises(InvalidAPIKeyError, match="Anthropic API key is not configured"):
+        AnthropicProvider(api_key="")
+
+
+@pytest.mark.anyio
+async def test_provider_specific_token_parameters():
+    """Verify max_tokens parameter mapping for Gemini and Anthropic."""
+    gemini_p = GeminiProvider(api_key="key-123", model="gemini-1.5-flash")
+    mock_res = MagicMock()
+    mock_res.status_code = 200
+    mock_res.json.return_value = {"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}
+    with patch("httpx.AsyncClient.post", return_value=mock_res) as mock_post:
+        await gemini_p.generate([{"role": "user", "content": "hi"}], max_tokens=500)
+        json_payload = mock_post.call_args[1]["json"]
+        assert json_payload["generationConfig"]["maxOutputTokens"] == 500
+
+

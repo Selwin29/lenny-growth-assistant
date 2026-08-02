@@ -45,10 +45,11 @@ class Artifact(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     artifact_type: Mapped[ArtifactType] = mapped_column(
-        Enum(ArtifactType, name="artifact_type"),
+        Enum(ArtifactType, name="artifact_type", values_callable=lambda x: [e.value for e in x]),
         nullable=False,
         default=ArtifactType.TEXT,
     )
+
     content: Mapped[str] = mapped_column(Text, nullable=False)
 
     message: Mapped["Message"] = relationship("Message", back_populates="artifact")

@@ -53,14 +53,16 @@ export const chatService = {
   /**
    * Post a message to a session.
    * @param {string} sessionId
-   * @param {Object} messageData { role: 'user' | 'assistant', content: string }
+   * @param {Object} messageData { role: 'user' | 'assistant', content: string, mode?: string, provider?: string }
    * @returns {Promise<Object>} Created message object
    */
-  async sendMessage(sessionId, { role = "user", content }) {
-    const response = await api.post(`/chat/${sessionId}/message`, {
-      role,
-      content,
-    });
+  async sendMessage(sessionId, { role = "user", content, mode, provider }) {
+    const payload = { role, content };
+    if (mode) payload.mode = mode;
+    if (provider) payload.provider = provider;
+    const response = await api.post(`/chat/${sessionId}/message`, payload);
     return response.data;
   },
 };
+
+

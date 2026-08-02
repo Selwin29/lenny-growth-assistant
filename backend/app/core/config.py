@@ -45,21 +45,22 @@ class Settings(BaseSettings):
     # --- Database ---
     DATABASE_URL: str = "postgresql+psycopg2://postgres:postgres@localhost:5432/lenny_growth_assistant"
 
-    # --- LLM / Agent provider configuration (used in later milestones) ---
-    LLM_PROVIDER: str = "ollama"
-    OLLAMA_MODEL: str = "llama3"
+    # --- LLM / Agent provider configuration ---
+    LLM_PROVIDER: str = "gemini"
+    OLLAMA_MODEL: str = "llama3.1:8b"
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     # Generation/read timeout in seconds for local Ollama inference.
-    # Local llama3.1:8b can take 60-240 s depending on hardware.
-    # Set higher if you see timeouts; do not set to 0 (infinite).
     OLLAMA_TIMEOUT: int = 300
     # Connection-establishment timeout (seconds). Keep short to fail fast.
     OLLAMA_CONNECT_TIMEOUT: int = 10
     # Maximum number of *words* per RAG chunk included in the LLM prompt.
-    # Capping this keeps the Ollama context window manageable.
-    RAG_CHUNK_WORD_LIMIT: int = 400
+    RAG_CHUNK_WORD_LIMIT: int = 300
     OPENAI_API_KEY: str = Field(default="")
     ANTHROPIC_API_KEY: str = Field(default="")
+    ANTHROPIC_MODEL: str = "claude-3-5-sonnet-20241022"
+    GEMINI_API_KEY: str = Field(default="")
+    GEMINI_MODEL: str = "gemini-1.5-flash"
+
 
     # --- Security & Auth ---
     JWT_SECRET: str = "supersecretkeychangeinprod"
@@ -73,6 +74,17 @@ class Settings(BaseSettings):
     def cors_origins_list(self) -> List[str]:
         """Return CORS_ORIGINS as a clean list of origin strings."""
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+
+    @property
+    def sync_database_url(self) -> str:
+        """Return DATABASE_URL formatted with explicit driver for SQLAlchemy/psycopg2."""
+        url = self.DATABASE_URL
+        if url.startswith("postgres://"):
+            return "postgresql+psycopg2://" + url[len("postgres://"):]
+        elif url.startswith("postgresql://") and not url.startswith("postgresql+"):
+            return "postgresql+psycopg2://" + url[len("postgresql://"):]
+        return url
+
 
 
 @lru_cache

@@ -127,3 +127,39 @@ async def test_router_routing_artifact():
         assert result["artifact"]["title"] == "Roadmap Page"
         assert result["artifact"]["artifact_type"] == "code"
         assert "Roadmap content" in result["artifact"]["content"]
+
+
+@pytest.mark.anyio
+async def test_router_explicit_mode():
+    router = AgentRouter()
+
+    mock_llm = AsyncMock()
+    mock_llm.generate.return_value = "Grounded response for explicit mode"
+
+    mock_rag_query = AsyncMock(return_value=[{
+        "score": 0.8,
+        "content": "Content.",
+        "episode_title": "Title",
+        "episode_id": "1",
+        "metadata": {}
+    }])
+
+    with patch("app.agents.skills.qa_skill.get_llm_provider", return_value=mock_llm), \
+         patch("app.agents.skills.essay_skill.get_llm_provider", return_value=mock_llm), \
+         patch("app.agents.skills.artifact_skill.get_llm_provider", return_value=mock_llm), \
+         patch("app.services.rag_service.RAGService.query", new=mock_rag_query):
+
+        # Even with a generic question, mode="ship30for30" routes to essay skill
+        res_essay = await router.route_and_execute("Generic question", [], mode="ship30for30")
+        assert res_essay["skill_used"] == "essay"
+
+        # mode="artifacts" routes to artifact skill
+        mock_llm.generate.return_value = '<artifact title="Test" type="markdown">Test content</artifact>'
+        res_art = await router.route_and_execute("Generic question", [], mode="artifacts")
+        assert res_art["skill_used"] == "artifact"
+
+        # mode="chat" routes to qa skill
+        mock_llm.generate.return_value = "QA reply"
+        res_qa = await router.route_and_execute("Generic question", [], mode="chat")
+        assert res_qa["skill_used"] == "qa"
+

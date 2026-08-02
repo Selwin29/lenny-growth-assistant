@@ -95,13 +95,15 @@ class EssaySkill(BaseSkill):
             {"role": "user", "content": f"Write a comprehensive Ship30for30-style essay on the topic: {prompt}"}
         ]
 
-        llm = get_llm_provider()
+        llm = get_llm_provider(provider_name=kwargs.get("provider"))
         start_time = time.monotonic()
         response_text = await llm.generate(
             messages=messages,
             system_prompt=system_prompt,
-            options={"num_predict": 1800},  # ~1300 words — right size for a Ship30for30 essay
+            max_tokens=1700,
+            options={"num_predict": 1700},  # ~1250 words — right size for a Ship30for30 essay
         )
+
         elapsed = time.monotonic() - start_time
         logger.info("[Essay] LLM generation completed in %.1fs", elapsed)
 

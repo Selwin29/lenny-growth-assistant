@@ -87,13 +87,15 @@ class ArtifactSkill(BaseSkill):
             {"role": "user", "content": f"Generate an artifact for: {prompt}"}
         ]
 
-        llm = get_llm_provider()
+        llm = get_llm_provider(provider_name=kwargs.get("provider"))
         start_time = time.monotonic()
         response_text = await llm.generate(
             messages=messages,
             system_prompt=system_prompt,
-            options={"num_predict": 2000},  # enough for a complete HTML/CSS artifact
+            max_tokens=1800,
+            options={"num_predict": 1800},  # bounded token limit for HTML/CSS artifacts
         )
+
         elapsed = time.monotonic() - start_time
         logger.info("[Artifact] LLM generation completed in %.1fs", elapsed)
 
