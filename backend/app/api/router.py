@@ -9,9 +9,14 @@ directly on the FastAPI app.
 
 from fastapi import APIRouter
 
+from app.api.routes import chat, auth
+
 api_v1_router = APIRouter()
 
-# Route modules are registered here as they are implemented.
+api_v1_router.include_router(auth.router, prefix="/auth", tags=["Auth"])
+api_v1_router.include_router(chat.router, prefix="/chat", tags=["Chat"])
+
+# Additional route modules are registered here as they are implemented.
 # Example (future milestone):
-# from app.api.routes import chat
-# api_v1_router.include_router(chat.router, prefix="/chat", tags=["Chat"])
+# from app.api.routes import auth
+# api_v1_router.include_router(auth.router, prefix="/auth", tags=["Auth"])

@@ -2,8 +2,8 @@
 SQLAlchemy database setup.
 
 Defines the engine, session factory, and declarative base used across
-the application. Model classes (added in a later milestone) should
-import `Base` from here and inherit from it.
+the application. Model classes (see app.models) import `Base` from
+here and inherit from it.
 """
 
 import logging
